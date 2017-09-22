@@ -1,6 +1,6 @@
 # bluez-gatttool-sensortag
 
-This sources is based on BlueZ 5.30.  
+This sources is based on BlueZ 5.47.  
 http://www.bluez.org/
 
 ## need

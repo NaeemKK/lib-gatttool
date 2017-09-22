@@ -50,8 +50,6 @@
 #include "gatttool.h"
 #include "client/display.h"
 
-#define ARRAY_SIZE(a)		(sizeof(a)/sizeof(a[0]))
-
 static GIOChannel *iochannel = NULL;
 static GAttrib *attrib = NULL;
 static GMainLoop *event_loop;
@@ -68,27 +66,11 @@ static int end;
 
 static void cmd_help(int argcp, char **argvp);
 
-static volatile enum state
-{
+static enum state {
 	STATE_DISCONNECTED,
 	STATE_CONNECTING,
 	STATE_CONNECTED
-}
-conn_state;
-
-static volatile enum ST_STATE {
-	ST_STATE_NONE,
-	ST_STATE_PRIMARY,
-	ST_STATE_PRIMARYED,
-	ST_STATE_CONNECT,
-	ST_STATE_WRITE_REQ,
-	ST_STATE_WRITE_RES,
-	ST_STATE_READ_REQ,
-	ST_STATE_READ_RES,
-	ST_STATE_EXIT,
-	ST_STATE_ERROR,
-} st_state;
-
+} conn_state;
 
 #define error(fmt, arg...) \
 	rl_printf(COLOR_RED "Error: " COLOR_OFF fmt, ## arg)
@@ -128,38 +110,25 @@ static void set_state(enum state st)
 	rl_set_prompt(get_prompt());
 }
 
-static inline void set_st_state(enum ST_STATE st)
-{
-	static enum ST_STATE prev = (enum ST_STATE)-1;
-
-	st_state = st;
-	if (st_state != prev) {
-		rl_printf("st_state = %d\n", st);
-		prev = st_state;
-	}
-}
-
-static void events_handler_main(const uint8_t *pdu, uint16_t len, gpointer user_data, uint16_t *pHandle)
+static void events_handler(const uint8_t *pdu, uint16_t len, gpointer user_data)
 {
 	uint8_t *opdu;
+	uint16_t handle, i, olen;
 	size_t plen;
-	uint16_t olen;
-#if 0
-	uint16_t i;
 	GString *s;
-#endif
 
-	*pHandle = get_le16(&pdu[1]);
+	handle = get_le16(&pdu[1]);
 
-#if 0
 	switch (pdu[0]) {
 	case ATT_OP_HANDLE_NOTIFY:
 		s = g_string_new(NULL);
-		g_string_printf(s, "Notification handle = 0x%04x value: ", *pHandle);
+		g_string_printf(s, "Notification handle = 0x%04x value: ",
+									handle);
 		break;
 	case ATT_OP_HANDLE_IND:
 		s = g_string_new(NULL);
-		g_string_printf(s, "Indication   handle = 0x%04x value: ", *pHandle);
+		g_string_printf(s, "Indication   handle = 0x%04x value: ",
+									handle);
 		break;
 	default:
 		error("Invalid opcode\n");
@@ -171,7 +140,6 @@ static void events_handler_main(const uint8_t *pdu, uint16_t len, gpointer user_
 
 	rl_printf("%s\n", s->str);
 	g_string_free(s, TRUE);
-#endif
 
 	if (pdu[0] == ATT_OP_HANDLE_NOTIFY)
 		return;
@@ -183,34 +151,7 @@ static void events_handler_main(const uint8_t *pdu, uint16_t len, gpointer user_
 		g_attrib_send(attrib, 0, opdu, olen, NULL, NULL, NULL);
 }
 
-static void events_handler(const uint8_t *pdu, uint16_t len, gpointer user_data)
-{
-	uint16_t handle;
-	const uint8_t *pData = &pdu[3];
-	static uint8_t btn = 0x00;
-
-	events_handler_main(pdu, len, user_data, &handle);
-
-	switch (handle) {
-	case 0x006b:		//button
-		{
-			uint16_t val = get_le16(pData);
-
-			//SensorTag button
-			if ((btn & 0x01) != (val & 0x01)) {
-				rl_printf("[button][S2] %s\n", ((val & 0x01) ? "ON" : "OFF"));
-			}
-			if ((btn & 0x02) != (val & 0x02)) {
-				rl_printf("[button][S3] %s\n", ((val & 0x02) ? "ON" : "OFF"));
-			}
-
-			btn = val;
-		}
-		break;
-	}
-}
-
-static void connect_cb_main(GIOChannel *io, GError *err, gpointer user_data)
+static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 {
 	uint16_t mtu;
 	uint16_t cid;
@@ -222,7 +163,7 @@ static void connect_cb_main(GIOChannel *io, GError *err, gpointer user_data)
 	}
 
 	bt_io_get(io, &err, BT_IO_OPT_IMTU, &mtu,
-	          BT_IO_OPT_CID, &cid, BT_IO_OPT_INVALID);
+				BT_IO_OPT_CID, &cid, BT_IO_OPT_INVALID);
 
 	if (err) {
 		g_printerr("Can't detect MTU, using default: %s", err->message);
@@ -233,18 +174,13 @@ static void connect_cb_main(GIOChannel *io, GError *err, gpointer user_data)
 	if (cid == ATT_CID)
 		mtu = ATT_DEFAULT_LE_MTU;
 
-	attrib = g_attrib_new(iochannel, mtu);
+	attrib = g_attrib_new(iochannel, mtu, false);
 	g_attrib_register(attrib, ATT_OP_HANDLE_NOTIFY, GATTRIB_ALL_HANDLES,
-	                  events_handler, attrib, NULL);
+						events_handler, attrib, NULL);
 	g_attrib_register(attrib, ATT_OP_HANDLE_IND, GATTRIB_ALL_HANDLES,
-	                  events_handler, attrib, NULL);
+						events_handler, attrib, NULL);
 	set_state(STATE_CONNECTED);
 	rl_printf("Connection successful\n");
-}
-
-static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
-{
-	connect_cb_main(io, err, user_data);
 }
 
 static void disconnect_io()
@@ -269,23 +205,20 @@ static void primary_all_cb(uint8_t status, GSList *services, void *user_data)
 
 	if (status) {
 		error("Discover all primary services failed: %s\n",
-		      att_ecode2str(status));
-		set_st_state(ST_STATE_ERROR);
+						att_ecode2str(status));
 		return;
 	}
 
 	if (services == NULL) {
 		error("No primary service found\n");
-		set_st_state(ST_STATE_ERROR);
 		return;
 	}
 
 	for (l = services; l; l = l->next) {
 		struct gatt_primary *prim = l->data;
 		rl_printf("attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n",
-		          prim->range.start, prim->range.end, prim->uuid);
+				prim->range.start, prim->range.end, prim->uuid);
 	}
-	set_st_state(ST_STATE_PRIMARYED);
 }
 
 static void primary_by_uuid_cb(uint8_t status, GSList *ranges, void *user_data)
@@ -294,23 +227,20 @@ static void primary_by_uuid_cb(uint8_t status, GSList *ranges, void *user_data)
 
 	if (status) {
 		error("Discover primary services by UUID failed: %s\n",
-		      att_ecode2str(status));
-		set_st_state(ST_STATE_ERROR);
+							att_ecode2str(status));
 		return;
 	}
 
 	if (ranges == NULL) {
 		error("No service UUID found\n");
-		set_st_state(ST_STATE_ERROR);
 		return;
 	}
 
 	for (l = ranges; l; l = l->next) {
 		struct att_range *range = l->data;
 		rl_printf("Starting handle: 0x%04x Ending handle: 0x%04x\n",
-		          range->start, range->end);
+						range->start, range->end);
 	}
-	set_st_state(ST_STATE_CONNECT);
 }
 
 static void included_cb(uint8_t status, GSList *includes, void *user_data)
@@ -319,7 +249,7 @@ static void included_cb(uint8_t status, GSList *includes, void *user_data)
 
 	if (status) {
 		error("Find included services failed: %s\n",
-		      att_ecode2str(status));
+							att_ecode2str(status));
 		return;
 	}
 
@@ -331,9 +261,9 @@ static void included_cb(uint8_t status, GSList *includes, void *user_data)
 	for (l = includes; l; l = l->next) {
 		struct gatt_included *incl = l->data;
 		rl_printf("handle: 0x%04x, start handle: 0x%04x, "
-		          "end handle: 0x%04x uuid: %s\n",
-		          incl->handle, incl->range.start,
-		          incl->range.end, incl->uuid);
+					"end handle: 0x%04x uuid: %s\n",
+					incl->handle, incl->range.start,
+					incl->range.end, incl->uuid);
 	}
 }
 
@@ -343,7 +273,7 @@ static void char_cb(uint8_t status, GSList *characteristics, void *user_data)
 
 	if (status) {
 		error("Discover all characteristics failed: %s\n",
-		      att_ecode2str(status));
+							att_ecode2str(status));
 		return;
 	}
 
@@ -351,9 +281,9 @@ static void char_cb(uint8_t status, GSList *characteristics, void *user_data)
 		struct gatt_char *chars = l->data;
 
 		rl_printf("handle: 0x%04x, char properties: 0x%02x, char value "
-		          "handle: 0x%04x, uuid: %s\n", chars->handle,
-		          chars->properties, chars->value_handle,
-		          chars->uuid);
+				"handle: 0x%04x, uuid: %s\n", chars->handle,
+				chars->properties, chars->value_handle,
+				chars->uuid);
 	}
 }
 
@@ -363,7 +293,7 @@ static void char_desc_cb(uint8_t status, GSList *descriptors, void *user_data)
 
 	if (status) {
 		error("Discover descriptors failed: %s\n",
-		      att_ecode2str(status));
+							att_ecode2str(status));
 		return;
 	}
 
@@ -371,12 +301,12 @@ static void char_desc_cb(uint8_t status, GSList *descriptors, void *user_data)
 		struct gatt_desc *desc = l->data;
 
 		rl_printf("handle: 0x%04x, uuid: %s\n", desc->handle,
-		          desc->uuid);
+								desc->uuid);
 	}
 }
 
 static void char_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
-                         gpointer user_data)
+							gpointer user_data)
 {
 	uint8_t value[plen];
 	ssize_t vlen;
@@ -385,15 +315,13 @@ static void char_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 
 	if (status != 0) {
 		error("Characteristic value/descriptor read failed: %s\n",
-		      att_ecode2str(status));
-		set_st_state(ST_STATE_ERROR);
+							att_ecode2str(status));
 		return;
 	}
 
 	vlen = dec_read_resp(pdu, plen, value, sizeof(value));
 	if (vlen < 0) {
 		error("Protocol error\n");
-		set_st_state(ST_STATE_ERROR);
 		return;
 	}
 
@@ -403,11 +331,10 @@ static void char_read_cb(guint8 status, const guint8 *pdu, guint16 plen,
 
 	rl_printf("%s\n", s->str);
 	g_string_free(s, TRUE);
-	set_st_state(ST_STATE_READ_RES);
 }
 
 static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
-                                 guint16 plen, gpointer user_data)
+					guint16 plen, gpointer user_data)
 {
 	struct att_data_list *list;
 	int i;
@@ -415,7 +342,7 @@ static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
 
 	if (status != 0) {
 		error("Read characteristics by UUID failed: %s\n",
-		      att_ecode2str(status));
+							att_ecode2str(status));
 		return;
 	}
 
@@ -429,7 +356,7 @@ static void char_read_by_uuid_cb(guint8 status, const guint8 *pdu,
 		int j;
 
 		g_string_printf(s, "handle: 0x%04x \t value: ",
-		                get_le16(value));
+							get_le16(value));
 		value += 2;
 		for (j = 0; j < list->len - 2; j++, value++)
 			g_string_append_printf(s, "%02x ", *value);
@@ -448,9 +375,10 @@ static void cmd_exit(int argcp, char **argvp)
 }
 
 static gboolean channel_watcher(GIOChannel *chan, GIOCondition cond,
-                                gpointer user_data)
+				gpointer user_data)
 {
 	disconnect_io();
+
 	return FALSE;
 }
 
@@ -470,7 +398,7 @@ static void cmd_connect(int argcp, char **argvp)
 			opt_dst_type = g_strdup(argvp[2]);
 		else
 			opt_dst_type = g_strdup("public");
-		}
+	}
 
 	if (opt_dst == NULL) {
 		error("Remote Bluetooth address required\n");
@@ -480,14 +408,14 @@ static void cmd_connect(int argcp, char **argvp)
 	rl_printf("Attempting to connect to %s\n", opt_dst);
 	set_state(STATE_CONNECTING);
 	iochannel = gatt_connect(opt_src, opt_dst, opt_dst_type, opt_sec_level,
-	                         opt_psm, opt_mtu, connect_cb, &gerr);
+					opt_psm, opt_mtu, connect_cb, &gerr);
 	if (iochannel == NULL) {
 		set_state(STATE_DISCONNECTED);
 		error("%s\n", gerr->message);
 		g_error_free(gerr);
 	} else
 		g_io_add_watch(iochannel, G_IO_HUP, channel_watcher, NULL);
-	}
+}
 
 static void cmd_disconnect(int argcp, char **argvp)
 {
@@ -634,25 +562,21 @@ static void cmd_read_hnd(int argcp, char **argvp)
 
 	if (conn_state != STATE_CONNECTED) {
 		failed("Disconnected\n");
-		set_st_state(ST_STATE_ERROR);
 		return;
 	}
 
 	if (argcp < 2) {
 		error("Missing argument: handle\n");
-		set_st_state(ST_STATE_ERROR);
 		return;
 	}
 
 	handle = strtohandle(argvp[1]);
 	if (handle < 0) {
 		error("Invalid handle: %s\n", argvp[1]);
-		set_st_state(ST_STATE_ERROR);
 		return;
 	}
 
 	gatt_read_char(attrib, handle, char_read_cb, attrib);
-	set_st_state(ST_STATE_READ_REQ);
 }
 
 static void cmd_read_uuid(int argcp, char **argvp)
@@ -693,27 +617,24 @@ static void cmd_read_uuid(int argcp, char **argvp)
 	}
 
 	gatt_read_char_by_uuid(attrib, start, end, &uuid, char_read_by_uuid_cb,
-	                       NULL);
+									NULL);
 }
 
 static void char_write_req_cb(guint8 status, const guint8 *pdu, guint16 plen,
-                              gpointer user_data)
+							gpointer user_data)
 {
 	if (status != 0) {
 		error("Characteristic Write Request failed: "
-		      "%s\n", att_ecode2str(status));
-		set_st_state(ST_STATE_ERROR);
+						"%s\n", att_ecode2str(status));
 		return;
 	}
 
 	if (!dec_write_resp(pdu, plen) && !dec_exec_write_resp(pdu, plen)) {
 		error("Protocol error\n");
-		set_st_state(ST_STATE_ERROR);
 		return;
 	}
 
 	rl_printf("Characteristic value was written successfully\n");
-	set_st_state(ST_STATE_WRITE_RES);
 }
 
 static void cmd_char_write(int argcp, char **argvp)
@@ -746,7 +667,7 @@ static void cmd_char_write(int argcp, char **argvp)
 
 	if (g_strcmp0("char-write-req", argvp[0]) == 0)
 		gatt_write_char(attrib, handle, value, plen,
-		                char_write_req_cb, NULL);
+					char_write_req_cb, NULL);
 	else
 		gatt_write_cmd(attrib, handle, value, plen, NULL, NULL);
 
@@ -786,8 +707,8 @@ static void cmd_sec_level(int argcp, char **argvp)
 	}
 
 	bt_io_set(iochannel, &gerr,
-	          BT_IO_OPT_SEC_LEVEL, sec_level,
-	          BT_IO_OPT_INVALID);
+			BT_IO_OPT_SEC_LEVEL, sec_level,
+			BT_IO_OPT_INVALID);
 	if (gerr) {
 		error("%s\n", gerr->message);
 		g_error_free(gerr);
@@ -795,13 +716,13 @@ static void cmd_sec_level(int argcp, char **argvp)
 }
 
 static void exchange_mtu_cb(guint8 status, const guint8 *pdu, guint16 plen,
-                            gpointer user_data)
+							gpointer user_data)
 {
 	uint16_t mtu;
 
 	if (status != 0) {
 		error("Exchange MTU Request failed: %s\n",
-		      att_ecode2str(status));
+						att_ecode2str(status));
 		return;
 	}
 
@@ -816,7 +737,7 @@ static void exchange_mtu_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		rl_printf("MTU was exchanged successfully: %d\n", mtu);
 	else
 		error("Error exchanging MTU\n");
-	}
+}
 
 static void cmd_mtu(int argcp, char **argvp)
 {
@@ -844,100 +765,12 @@ static void cmd_mtu(int argcp, char **argvp)
 	opt_mtu = strtoll(argvp[1], NULL, 0);
 	if (errno != 0 || opt_mtu < ATT_DEFAULT_LE_MTU) {
 		error("Invalid value. Minimum MTU size is %d\n",
-		      ATT_DEFAULT_LE_MTU);
+							ATT_DEFAULT_LE_MTU);
 		return;
 	}
 
 	gatt_exchange_mtu(attrib, opt_mtu, exchange_mtu_cb, NULL);
 }
-
-///////////////////////////////////////////////////////////////
-static gboolean idling_func(gpointer user_data)
-{
-	const char *cmd_req[3];
-	static int set_nfy_index;
-	static const struct {
-		const char *handle;
-		const char *value;
-	} SET_NFY[] = {
-		{ "6c", "0100" },		//button
-		{ "26", "0100" },		//IR Temperature
-	};
-
-
-	if (conn_state != STATE_CONNECTED) {
-		if (st_state != ST_STATE_NONE) {
-			rl_printf(" --> disconnect\n");
-		}
-		set_st_state(ST_STATE_NONE);
-		return TRUE;
-	}
-
-	switch (st_state) {
-	case ST_STATE_NONE:
-		if (conn_state == STATE_CONNECTED) {
-			//first connect
-			rl_printf(" --> connected\n");
-			set_st_state(ST_STATE_PRIMARY);
-			cmd_primary(1, NULL);
-		}
-		break;
-
-	case ST_STATE_PRIMARYED:
-		rl_printf(" --> found primary services\n");
-		cmd_req[0] = "char-write-req";
-		cmd_req[1] = SET_NFY[0].handle;
-		cmd_req[2] = SET_NFY[0].value;
-		set_nfy_index = 1;
-		cmd_char_write((int)ARRAY_SIZE(cmd_req), (char **)cmd_req);
-		set_st_state(ST_STATE_WRITE_REQ);
-		break;
-
-	case ST_STATE_WRITE_RES:
-		if (set_nfy_index < (int)ARRAY_SIZE(SET_NFY)) {
-			cmd_req[0] = "char-write-req";
-			cmd_req[1] = SET_NFY[set_nfy_index].handle;
-			cmd_req[2] = SET_NFY[set_nfy_index].value;
-			cmd_char_write((int)ARRAY_SIZE(cmd_req), (char **)cmd_req);
-			set_nfy_index++;
-			set_st_state(ST_STATE_WRITE_REQ);
-		}
-		else {
-			set_st_state(ST_STATE_CONNECT);
-		}
-		break;
-
-	case ST_STATE_ERROR:
-	case ST_STATE_EXIT:
-		cmd_exit(0, NULL);
-		break;
-
-	default:
-		break;
-	}
-
-	return TRUE;
-}
-
-
-static void cmd_sensortag(int argcp, char **argvp)
-{
-	//idle
-	g_idle_add(idling_func, NULL);
-
-	rl_printf("@@@ SensorTag command @@@\n\n");
-
-	if (conn_state == STATE_DISCONNECTED) {
-		//取りあえず接続しよう
-		rl_printf("--------------connect start----------------\n");
-		set_st_state(ST_STATE_NONE);
-		cmd_connect(0, NULL);
-	}
-}
-
-///////////////////////////////////////////////////////////////
-
-
 
 static struct {
 	const char *cmd;
@@ -945,70 +778,36 @@ static struct {
 	const char *params;
 	const char *desc;
 } commands[] = {
-	{
-		"help",		cmd_help,	"",
-		"Show this help"
-	},
-	{
-		"exit",		cmd_exit,	"",
-		"Exit interactive mode"
-	},
-	{
-		"quit",		cmd_exit,	"",
-		"Exit interactive mode"
-	},
-	{
-		"connect",		cmd_connect,	"[address [address type]]",
-		"Connect to a remote device"
-	},
-	{
-		"disconnect",		cmd_disconnect,	"",
-		"Disconnect from a remote device"
-	},
-	{
-		"primary",		cmd_primary,	"[UUID]",
-		"Primary Service Discovery"
-	},
-	{
-		"included",		cmd_included,	"[start hnd [end hnd]]",
-		"Find Included Services"
-	},
-	{
-		"characteristics",	cmd_char,	"[start hnd [end hnd [UUID]]]",
-		"Characteristics Discovery"
-	},
-	{
-		"char-desc",		cmd_char_desc,	"[start hnd] [end hnd]",
-		"Characteristics Descriptor Discovery"
-	},
-	{
-		"char-read-hnd",	cmd_read_hnd,	"<handle>",
-		"Characteristics Value/Descriptor Read by handle"
-	},
-	{
-		"char-read-uuid",	cmd_read_uuid,	"<UUID> [start hnd] [end hnd]",
-		"Characteristics Value/Descriptor Read by UUID"
-	},
-	{
-		"char-write-req",	cmd_char_write,	"<handle> <new value>",
-		"Characteristic Value Write (Write Request)"
-	},
-	{
-		"char-write-cmd",	cmd_char_write,	"<handle> <new value>",
-		"Characteristic Value Write (No response)"
-	},
-	{
-		"sec-level",		cmd_sec_level,	"[low | medium | high]",
-		"Set security level. Default: low"
-	},
-	{
-		"mtu",		cmd_mtu,	"<value>",
-		"Exchange MTU for GATT/ATT"
-	},
-	{
-		"st",		cmd_sensortag,	"<value>",
-		"SensorTag command test"
-	},
+	{ "help",		cmd_help,	"",
+		"Show this help"},
+	{ "exit",		cmd_exit,	"",
+		"Exit interactive mode" },
+	{ "quit",		cmd_exit,	"",
+		"Exit interactive mode" },
+	{ "connect",		cmd_connect,	"[address [address type]]",
+		"Connect to a remote device" },
+	{ "disconnect",		cmd_disconnect,	"",
+		"Disconnect from a remote device" },
+	{ "primary",		cmd_primary,	"[UUID]",
+		"Primary Service Discovery" },
+	{ "included",		cmd_included,	"[start hnd [end hnd]]",
+		"Find Included Services" },
+	{ "characteristics",	cmd_char,	"[start hnd [end hnd [UUID]]]",
+		"Characteristics Discovery" },
+	{ "char-desc",		cmd_char_desc,	"[start hnd] [end hnd]",
+		"Characteristics Descriptor Discovery" },
+	{ "char-read-hnd",	cmd_read_hnd,	"<handle>",
+		"Characteristics Value/Descriptor Read by handle" },
+	{ "char-read-uuid",	cmd_read_uuid,	"<UUID> [start hnd] [end hnd]",
+		"Characteristics Value/Descriptor Read by UUID" },
+	{ "char-write-req",	cmd_char_write,	"<handle> <new value>",
+		"Characteristic Value Write (Write Request)" },
+	{ "char-write-cmd",	cmd_char_write,	"<handle> <new value>",
+		"Characteristic Value Write (No response)" },
+	{ "sec-level",		cmd_sec_level,	"[low | medium | high]",
+		"Set security level. Default: low" },
+	{ "mtu",		cmd_mtu,	"<value>",
+		"Exchange MTU for GATT/ATT" },
 	{ NULL, NULL, NULL}
 };
 
@@ -1018,7 +817,7 @@ static void cmd_help(int argcp, char **argvp)
 
 	for (i = 0; commands[i].cmd; i++)
 		rl_printf("%-15s %-30s %s\n", commands[i].cmd,
-		          commands[i].params, commands[i].desc);
+				commands[i].params, commands[i].desc);
 }
 
 static void parse_line(char *line_read)
@@ -1059,7 +858,7 @@ done:
 }
 
 static gboolean prompt_read(GIOChannel *chan, GIOCondition cond,
-                            gpointer user_data)
+							gpointer user_data)
 {
 	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
 		g_io_channel_unref(chan);
@@ -1085,7 +884,7 @@ static char *completion_generator(const char *text, int state)
 		index++;
 		if (strncmp(cmd, text, len) == 0)
 			return strdup(cmd);
-		}
+	}
 
 	return NULL;
 }
@@ -1096,7 +895,7 @@ static char **commands_completion(const char *text, int start, int end)
 		return rl_completion_matches(text, &completion_generator);
 	else
 		return NULL;
-	}
+}
 
 static guint setup_standard_input(void)
 {
@@ -1106,8 +905,8 @@ static guint setup_standard_input(void)
 	channel = g_io_channel_unix_new(fileno(stdin));
 
 	source = g_io_add_watch(channel,
-	                        G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-	                        prompt_read, NULL);
+				G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+				prompt_read, NULL);
 
 	g_io_channel_unref(channel);
 
@@ -1115,7 +914,7 @@ static guint setup_standard_input(void)
 }
 
 static gboolean signal_handler(GIOChannel *channel, GIOCondition condition,
-                               gpointer user_data)
+							gpointer user_data)
 {
 	static unsigned int __terminated = 0;
 	struct signalfd_siginfo si;
@@ -1183,8 +982,8 @@ static guint setup_signalfd(void)
 	g_io_channel_set_buffered(channel, FALSE);
 
 	source = g_io_add_watch(channel,
-	                        G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-	                        signal_handler, NULL);
+				G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+				signal_handler, NULL);
 
 	g_io_channel_unref(channel);
 
@@ -1192,7 +991,7 @@ static guint setup_signalfd(void)
 }
 
 int interactive(const char *src, const char *dst,
-                const char *dst_type, int psm)
+		const char *dst_type, int psm)
 {
 	guint input;
 	guint signal;

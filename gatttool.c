@@ -148,7 +148,7 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 	if (cid == ATT_CID)
 		mtu = ATT_DEFAULT_LE_MTU;
 
-	attrib = g_attrib_new(io, mtu);
+	attrib = g_attrib_new(io, mtu, false);
 
 	if (opt_listen)
 		g_idle_add(listen_start, attrib);
@@ -529,11 +529,6 @@ int main(int argc, char *argv[])
 	GOptionGroup *gatt_group, *params_group, *char_rw_group;
 	GError *gerr = NULL;
 	GIOChannel *chan;
-
-	//強制interactive
-	opt_src = g_strdup("hci0");
-	opt_dst = g_strdup("34:B1:F7:D4:FA:33");
-	opt_interactive = TRUE;
 
 	opt_dst_type = g_strdup("public");
 	opt_sec_level = g_strdup("low");
