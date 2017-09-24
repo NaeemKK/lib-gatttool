@@ -1,5 +1,5 @@
 PROJECT_NAME := gatool
-BLUEZ_PATH = ../pkg/bluez-5.30
+BLUEZ_PATH = ./bluez
 PRJ_PATH = .
 OBJECT_DIRECTORY = _build
 OUTPUT_BINARY_DIRECTORY = .
