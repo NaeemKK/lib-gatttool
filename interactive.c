@@ -55,7 +55,7 @@ static GAttrib *attrib = NULL;
 static GMainLoop *event_loop;
 static GString *prompt;
 
-static char *opt_src = NULL;
+static char *opt_interface = NULL;
 static char *opt_dst = NULL;
 static char *opt_dst_type = NULL;
 static char *opt_sec_level = NULL;
@@ -63,6 +63,8 @@ static int opt_psm = 0;
 static int opt_mtu = 0;
 static int start;
 static int end;
+
+static GThread *thread;
 
 static void cmd_help(int argcp, char **argvp);
 
@@ -407,7 +409,7 @@ static void cmd_connect(int argcp, char **argvp)
 
 	rl_printf("Attempting to connect to %s\n", opt_dst);
 	set_state(STATE_CONNECTING);
-	iochannel = gatt_connect(opt_src, opt_dst, opt_dst_type, opt_sec_level,
+	iochannel = gatt_connect(opt_interface, opt_dst, opt_dst_type, opt_sec_level,
 					opt_psm, opt_mtu, connect_cb, &gerr);
 	if (iochannel == NULL) {
 		set_state(STATE_DISCONNECTED);
@@ -417,7 +419,7 @@ static void cmd_connect(int argcp, char **argvp)
 		g_io_add_watch(iochannel, G_IO_HUP, channel_watcher, NULL);
 }
 
-static void cmd_disconnect(int argcp, char **argvp)
+static void disconnect(void)
 {
 	disconnect_io();
 }
@@ -579,131 +581,100 @@ static void cmd_read_hnd(int argcp, char **argvp)
 	gatt_read_char(attrib, handle, char_read_cb, attrib);
 }
 
-static void cmd_read_uuid(int argcp, char **argvp)
+const char * read_uuid(char *s_uuid, int start_handle,int end_handle,char_read_by_uuid_cb cb,
+		void *user_data)
 {
-	int start = 0x0001;
-	int end = 0xffff;
 	bt_uuid_t uuid;
 
 	if (conn_state != STATE_CONNECTED) {
-		failed("Disconnected\n");
-		return;
+		return "No connection is established yet";
 	}
 
-	if (argcp < 2) {
-		error("Missing argument: UUID\n");
-		return;
+	if (bt_string_to_uuid(&uuid, s_uuid) < 0) {
+		return "Invalid UUID";
 	}
 
-	if (bt_string_to_uuid(&uuid, argvp[1]) < 0) {
-		error("Invalid UUID\n");
-		return;
+	if (start_handle < 0) {
+		return "Invalid start handle";
+	}else if (start_handle == 0)
+	{
+		start_handle = 0x0001;
 	}
 
-	if (argcp > 2) {
-		start = strtohandle(argvp[2]);
-		if (start < 0) {
-			error("Invalid start handle: %s\n", argvp[1]);
-			return;
-		}
+	if (end < 0) {
+		return "Invalid end handle";
+	}else if(end_handle == 0)
+	{
+		end = 0xffff;
 	}
 
-	if (argcp > 3) {
-		end = strtohandle(argvp[3]);
-		if (end < 0) {
-			error("Invalid end handle: %s\n", argvp[2]);
-			return;
-		}
-	}
+	/* ToDo: Bluez tool does not return status but check the return type of
+	 * functions inside it and return status to the user accordingly about
+	 * success and failure.
+	 */
+	gatt_read_char_by_uuid(attrib, start, end, &uuid, cb,
+									user_data);
 
-	gatt_read_char_by_uuid(attrib, start, end, &uuid, char_read_by_uuid_cb,
-									NULL);
+	return NULL;
 }
 
-static void char_write_req_cb(guint8 status, const guint8 *pdu, guint16 plen,
-							gpointer user_data)
+const char * char_write(int handle, uint8_t *value, size_t plen,bool response_needed,
+		char_write_req_cb cb, void *user_data)
 {
-	if (status != 0) {
-		error("Characteristic Write Request failed: "
-						"%s\n", att_ecode2str(status));
-		return;
-	}
-
-	if (!dec_write_resp(pdu, plen) && !dec_exec_write_resp(pdu, plen)) {
-		error("Protocol error\n");
-		return;
-	}
-
-	rl_printf("Characteristic value was written successfully\n");
-}
-
-static void cmd_char_write(int argcp, char **argvp)
-{
-	uint8_t *value;
-	size_t plen;
-	int handle;
-
 	if (conn_state != STATE_CONNECTED) {
-		failed("Disconnected\n");
-		return;
+		return "No connection is established yet";
 	}
 
-	if (argcp < 3) {
-		rl_printf("Usage: %s <handle> <new value>\n", argvp[0]);
-		return;
+	if (value == NULL) {
+		return "No data is provided";
 	}
 
-	handle = strtohandle(argvp[1]);
 	if (handle <= 0) {
-		error("A valid handle is required\n");
-		return;
+		return "A valid handle is required";
 	}
 
-	plen = gatt_attr_data_from_string(argvp[2], &value);
 	if (plen == 0) {
-		error("Invalid value\n");
-		return;
+		return "Invalid length";
 	}
 
-	if (g_strcmp0("char-write-req", argvp[0]) == 0)
+	if (response_needed == true)
 		gatt_write_char(attrib, handle, value, plen,
-					char_write_req_cb, NULL);
+				cb, user_data);
 	else
 		gatt_write_cmd(attrib, handle, value, plen, NULL, NULL);
 
 	g_free(value);
+
+	return NULL;
 }
 
-static void cmd_sec_level(int argcp, char **argvp)
+const char * set_sec_level(char *s_sec)
 {
 	GError *gerr = NULL;
 	BtIOSecLevel sec_level;
 
-	if (argcp < 2) {
-		rl_printf("sec-level: %s\n", opt_sec_level);
-		return;
+	if (s_sec == NULL) {
+		return "No security level is sepcified";
 	}
 
-	if (strcasecmp(argvp[1], "medium") == 0)
+	if (strcasecmp(s_sec, "medium") == 0)
 		sec_level = BT_IO_SEC_MEDIUM;
-	else if (strcasecmp(argvp[1], "high") == 0)
+	else if (strcasecmp(s_sec, "high") == 0)
 		sec_level = BT_IO_SEC_HIGH;
-	else if (strcasecmp(argvp[1], "low") == 0)
+	else if (strcasecmp(s_sec, "low") == 0)
 		sec_level = BT_IO_SEC_LOW;
 	else {
-		rl_printf("Allowed values: low | medium | high\n");
-		return;
+		return "Allowed values: low | medium | high";
 	}
 
 	g_free(opt_sec_level);
-	opt_sec_level = g_strdup(argvp[1]);
+	opt_sec_level = g_strdup(s_sec);
 
 	if (conn_state != STATE_CONNECTED)
-		return;
+		return "no connection is established yet";
 
 	if (opt_psm) {
-		rl_printf("Change will take effect on reconnection\n");
-		return;
+		return "Change will take effect on reconnection";
 	}
 
 	bt_io_set(iochannel, &gerr,
@@ -712,7 +683,10 @@ static void cmd_sec_level(int argcp, char **argvp)
 	if (gerr) {
 		error("%s\n", gerr->message);
 		g_error_free(gerr);
+		return "unable to set security level";
 	}
+
+	return NULL;
 }
 
 static void exchange_mtu_cb(guint8 status, const guint8 *pdu, guint16 plen,
@@ -739,16 +713,15 @@ static void exchange_mtu_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		error("Error exchanging MTU\n");
 }
 
-static void cmd_mtu(int argcp, char **argvp)
+const char * set_mtu(int mtu)
 {
 	if (conn_state != STATE_CONNECTED) {
-		failed("Disconnected\n");
-		return;
+		return "No device is connected";
 	}
 
-	if (opt_psm) {
-		failed("Operation is only available for LE transport.\n");
-		return;
+	if (opt_psm)
+	{
+		return "Operation is only available for LE transport";
 	}
 
 	if (argcp < 2) {
@@ -811,221 +784,72 @@ static struct {
 	{ NULL, NULL, NULL}
 };
 
-static void cmd_help(int argcp, char **argvp)
+static gpointer event_loop_th(gpointer data)
 {
-	int i;
-
-	for (i = 0; commands[i].cmd; i++)
-		rl_printf("%-15s %-30s %s\n", commands[i].cmd,
-				commands[i].params, commands[i].desc);
+	event_loop = g_main_loop_new(NULL, FALSE);
+	g_main_loop_run(event_loop);
+	g_main_loop_unref(event_loop);
+	disconnect();
 }
-
-static void parse_line(char *line_read)
+const char * interactive(const char *interface, const char *dst,
+		const char *dst_type, int mtu, int psm, const char *sec_level)
 {
-	char **argvp;
-	int argcp;
-	int i;
+	enum err_codes{
+		NONE=0,
+		DST_MISSING,
+		LOOP_THREAD_FAILURE
+	}err_code;
 
-	if (line_read == NULL) {
-		rl_printf("\n");
-		cmd_exit(0, NULL);
-		return;
-	}
+	err_code = NONE;
 
-	line_read = g_strstrip(line_read);
-
-	if (*line_read == '\0')
-		goto done;
-
-	add_history(line_read);
-
-	if (g_shell_parse_argv(line_read, &argcp, &argvp, NULL) == FALSE)
-		goto done;
-
-	for (i = 0; commands[i].cmd; i++)
-		if (strcasecmp(commands[i].cmd, argvp[0]) == 0)
-			break;
-
-	if (commands[i].cmd)
-		commands[i].func(argcp, argvp);
+	if(sec_level)
+		opt_sec_level = g_strdup(sec_level);
 	else
-		error("%s: command not found\n", argvp[0]);
+		opt_sec_level = g_strdup("low");
 
-	g_strfreev(argvp);
+	if(interface)
+		opt_interface = g_strdup(interface);
+	else
+		opt_interface = g_strdup("hci0");
 
-done:
-	free(line_read);
-}
-
-static gboolean prompt_read(GIOChannel *chan, GIOCondition cond,
-							gpointer user_data)
-{
-	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
-		g_io_channel_unref(chan);
-		return FALSE;
+	if(dst)
+		opt_dst = g_strdup(dst);
+	else
+	{
+		err_code = DST_MISSING;
+		goto err;
 	}
 
-	rl_callback_read_char();
+	if(dst_type)
+		opt_dst_type = g_strdup(dst_type);
+	else
+		opt_dst_type = g_strdup("public");
 
-	return TRUE;
-}
+	opt_psm = psm;
+	opt_mtu = mtu;
 
-static char *completion_generator(const char *text, int state)
-{
-	static int index = 0, len = 0;
-	const char *cmd = NULL;
-
-	if (state == 0) {
-		index = 0;
-		len = strlen(text);
-	}
-
-	while ((cmd = commands[index].cmd) != NULL) {
-		index++;
-		if (strncmp(cmd, text, len) == 0)
-			return strdup(cmd);
+	GError *error;
+	thread = g_thread_try_new (NULL,event_loop_th,NULL,&error);
+	if(!thread)
+	{
+		printf("%s\n",error->message);
+		err_code = LOOP_THREAD_FAILURE;
+		goto err;
 	}
 
 	return NULL;
-}
 
-static char **commands_completion(const char *text, int start, int end)
-{
-	if (start == 0)
-		return rl_completion_matches(text, &completion_generator);
-	else
-		return NULL;
-}
-
-static guint setup_standard_input(void)
-{
-	GIOChannel *channel;
-	guint source;
-
-	channel = g_io_channel_unix_new(fileno(stdin));
-
-	source = g_io_add_watch(channel,
-				G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-				prompt_read, NULL);
-
-	g_io_channel_unref(channel);
-
-	return source;
-}
-
-static gboolean signal_handler(GIOChannel *channel, GIOCondition condition,
-							gpointer user_data)
-{
-	static unsigned int __terminated = 0;
-	struct signalfd_siginfo si;
-	ssize_t result;
-	int fd;
-
-	if (condition & (G_IO_NVAL | G_IO_ERR | G_IO_HUP)) {
-		g_main_loop_quit(event_loop);
-		return FALSE;
-	}
-
-	fd = g_io_channel_unix_get_fd(channel);
-
-	result = read(fd, &si, sizeof(si));
-	if (result != sizeof(si))
-		return FALSE;
-
-	switch (si.ssi_signo) {
-	case SIGINT:
-		rl_replace_line("", 0);
-		rl_crlf();
-		rl_on_new_line();
-		rl_redisplay();
-		break;
-	case SIGTERM:
-		if (__terminated == 0) {
-			rl_replace_line("", 0);
-			rl_crlf();
-			g_main_loop_quit(event_loop);
-		}
-
-		__terminated = 1;
-		break;
-	}
-
-	return TRUE;
-}
-
-static guint setup_signalfd(void)
-{
-	GIOChannel *channel;
-	guint source;
-	sigset_t mask;
-	int fd;
-
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-
-	if (sigprocmask(SIG_BLOCK, &mask, NULL) < 0) {
-		perror("Failed to set signal mask");
-		return 0;
-	}
-
-	fd = signalfd(-1, &mask, 0);
-	if (fd < 0) {
-		perror("Failed to create signal descriptor");
-		return 0;
-	}
-
-	channel = g_io_channel_unix_new(fd);
-
-	g_io_channel_set_close_on_unref(channel, TRUE);
-	g_io_channel_set_encoding(channel, NULL, NULL);
-	g_io_channel_set_buffered(channel, FALSE);
-
-	source = g_io_add_watch(channel,
-				G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
-				signal_handler, NULL);
-
-	g_io_channel_unref(channel);
-
-	return source;
-}
-
-int interactive(const char *src, const char *dst,
-		const char *dst_type, int psm)
-{
-	guint input;
-	guint signal;
-
-	opt_sec_level = g_strdup("low");
-
-	opt_src = g_strdup(src);
-	opt_dst = g_strdup(dst);
-	opt_dst_type = g_strdup(dst_type);
-	opt_psm = psm;
-
-	prompt = g_string_new(NULL);
-
-	event_loop = g_main_loop_new(NULL, FALSE);
-
-	input = setup_standard_input();
-	signal = setup_signalfd();
-
-	rl_attempted_completion_function = commands_completion;
-	rl_erase_empty_line = 1;
-	rl_callback_handler_install(get_prompt(), parse_line);
-
-	g_main_loop_run(event_loop);
-
-	rl_callback_handler_remove();
-	cmd_disconnect(0, NULL);
-	g_source_remove(input);
-	g_source_remove(signal);
-	g_main_loop_unref(event_loop);
-	g_string_free(prompt, TRUE);
-
-	g_free(opt_src);
-	g_free(opt_dst);
+err:
+	g_free(opt_interface);
+	g_free(opt_dst_type);
 	g_free(opt_sec_level);
-
-	return 0;
+	switch(err_code)
+	{
+		case NONE:
+			return NULL;
+		case DST_MISSING:
+			return "User provided option issue";
+		case LOOP_THREAD_FAILURE:
+			return "Thread cannot be created";
+	}
 }

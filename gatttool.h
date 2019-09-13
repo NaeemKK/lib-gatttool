@@ -1,30 +1,33 @@
-/*
+
+#ifndef __GATTOOL_H_
+#define __GATTOOL_H_
+
+/* @Reference
  *
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2011  Nokia Corporation
- *
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
- *
  */
 
-int interactive(const char *src, const char *dst, const char *dst_type,
-								int psm);
-GIOChannel *gatt_connect(const char *src, const char *dst,
-			const char *dst_type, const char *sec_level,
-			int psm, int mtu, BtIOConnect connect_cb,
-			GError **gerr);
-size_t gatt_attr_data_from_string(const char *str, uint8_t **data);
+typedef void (*char_write_req_cb)(guint8 status, const guint8 *pdu, guint16 plen,
+		gpointer user_data);
+
+typedef void (*char_read_by_uuid_cb)(guint8 status, const guint8 *pdu,
+					guint16 plen, gpointer user_data);
+
+const char * initialize(conn_params_t *params, const char *error);
+const char * interactive(const char *interface, const char *dst,
+		const char *dst_type, int mtu, int psm, const char *sec_level);
+
+
+typedef struct conn_params_s
+{
+	char *src;
+	char *dst;
+	char *dst_type;
+	char *sec_level;
+	int mtu;
+	int psm;
+}conn_params_t;
+
+#endif
