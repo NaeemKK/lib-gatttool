@@ -185,6 +185,12 @@ static void connect_cb(GIOChannel *io, GError *err, gpointer user_data)
 	rl_printf("Connection successful\n");
 }
 
+int register_notification_handler(int handle,GAttribNotifyFunc func, gpointer user_data)
+{
+	return g_attrib_register(attrib, ATT_OP_HANDLE_NOTIFY, handle,
+			func, attrib, NULL);
+}
+
 static void disconnect_io()
 {
 	if (conn_state == STATE_DISCONNECTED)
@@ -586,15 +592,18 @@ const char * read_uuid(char *s_uuid, int start_handle,int end_handle,char_read_b
 {
 	bt_uuid_t uuid;
 
-	if (conn_state != STATE_CONNECTED) {
+	if (conn_state != STATE_CONNECTED)
+	{
 		return "No connection is established yet";
 	}
 
-	if (bt_string_to_uuid(&uuid, s_uuid) < 0) {
+	if (bt_string_to_uuid(&uuid, s_uuid) < 0)
+	{
 		return "Invalid UUID";
 	}
 
-	if (start_handle < 0) {
+	if (start_handle < 0)
+	{
 		return "Invalid start handle";
 	}else if (start_handle == 0)
 	{
@@ -621,19 +630,23 @@ const char * read_uuid(char *s_uuid, int start_handle,int end_handle,char_read_b
 const char * char_write(int handle, uint8_t *value, size_t plen,bool response_needed,
 		char_write_req_cb cb, void *user_data)
 {
-	if (conn_state != STATE_CONNECTED) {
+	if (conn_state != STATE_CONNECTED)
+	{
 		return "No connection is established yet";
 	}
 
-	if (value == NULL) {
+	if (value == NULL)
+	{
 		return "No data is provided";
 	}
 
-	if (handle <= 0) {
+	if (handle <= 0)
+	{
 		return "A valid handle is required";
 	}
 
-	if (plen == 0) {
+	if (plen == 0)
+	{
 		return "Invalid length";
 	}
 
@@ -673,7 +686,8 @@ const char * set_sec_level(char *s_sec)
 	if (conn_state != STATE_CONNECTED)
 		return "no connection is established yet";
 
-	if (opt_psm) {
+	if (opt_psm)
+	{
 		return "Change will take effect on reconnection";
 	}
 
@@ -689,61 +703,6 @@ const char * set_sec_level(char *s_sec)
 	return NULL;
 }
 
-static void exchange_mtu_cb(guint8 status, const guint8 *pdu, guint16 plen,
-							gpointer user_data)
-{
-	uint16_t mtu;
-
-	if (status != 0) {
-		error("Exchange MTU Request failed: %s\n",
-						att_ecode2str(status));
-		return;
-	}
-
-	if (!dec_mtu_resp(pdu, plen, &mtu)) {
-		error("Protocol error\n");
-		return;
-	}
-
-	mtu = MIN(mtu, opt_mtu);
-	/* Set new value for MTU in client */
-	if (g_attrib_set_mtu(attrib, mtu))
-		rl_printf("MTU was exchanged successfully: %d\n", mtu);
-	else
-		error("Error exchanging MTU\n");
-}
-
-const char * set_mtu(int mtu)
-{
-	if (conn_state != STATE_CONNECTED) {
-		return "No device is connected";
-	}
-
-	if (opt_psm)
-	{
-		return "Operation is only available for LE transport";
-	}
-
-	if (argcp < 2) {
-		rl_printf("Usage: mtu <value>\n");
-		return;
-	}
-
-	if (opt_mtu) {
-		failed("MTU exchange can only occur once per connection.\n");
-		return;
-	}
-
-	errno = 0;
-	opt_mtu = strtoll(argvp[1], NULL, 0);
-	if (errno != 0 || opt_mtu < ATT_DEFAULT_LE_MTU) {
-		error("Invalid value. Minimum MTU size is %d\n",
-							ATT_DEFAULT_LE_MTU);
-		return;
-	}
-
-	gatt_exchange_mtu(attrib, opt_mtu, exchange_mtu_cb, NULL);
-}
 
 static struct {
 	const char *cmd;
