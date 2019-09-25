@@ -45,8 +45,7 @@
 #include "gatt.h"
 #include "gatttool.h"
 
-const char * initialize(const conn_params_t *params)
+const char * initialize(void)
 {
-	return interactive(params->src, params->dst, params->dst_type, params->mtu, params->psm,
-			params->sec_level);
+	return interactive();
 }
