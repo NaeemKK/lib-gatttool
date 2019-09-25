@@ -10,7 +10,7 @@ write and notifications are supported.
     *GLib
     *readline
     
-##ToDO
+## ToDO
 1. Add usage docs
 2. Run and Test
 3. Add functions to read and write through uuid
