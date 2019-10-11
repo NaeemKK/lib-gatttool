@@ -1,4 +1,4 @@
-PROJECT_NAME := gatool
+PROJECT_NAME := libgatool.so
 BLUEZ_PATH = ./bluez
 PRJ_PATH = .
 OBJECT_DIRECTORY = _build
@@ -35,16 +35,15 @@ SIZE    		:= "$(GNU_PREFIX)size"
 remduplicates = $(strip $(if $1,$(firstword $1) $(call remduplicates,$(filter-out $(firstword $1),$1))))
 
 #sources project
-C_SOURCE_FILES += $(PRJ_PATH)/gatttool.c
+#C_SOURCE_FILES += $(PRJ_PATH)/gatttool.c
 C_SOURCE_FILES += $(PRJ_PATH)/att.c
 C_SOURCE_FILES += $(PRJ_PATH)/gatt.c
 C_SOURCE_FILES += $(PRJ_PATH)/gattrib.c
-C_SOURCE_FILES += $(PRJ_PATH)/interactive.c
+C_SOURCE_FILES += $(PRJ_PATH)/lib-gatttool.c
 C_SOURCE_FILES += $(PRJ_PATH)/utils.c
 
 C_SOURCE_FILES += $(BLUEZ_PATH)/btio/btio.c
 C_SOURCE_FILES += $(BLUEZ_PATH)/src/log.c
-C_SOURCE_FILES += $(BLUEZ_PATH)/client/display.c
 
 #assembly files common to all targets
 #ASM_SOURCE_FILES  = $(SDK_PATH)/some.s
@@ -63,7 +62,7 @@ BUILD_DIRECTORIES := $(sort $(OBJECT_DIRECTORY) $(OUTPUT_BINARY_DIRECTORY) $(LIS
 #flags common to all targets
 #CFLAGS += -mcpu=cortex-m0
 #CFLAGS += -mthumb -mabi=aapcs --std=gnu99
-CFLAGS += -Wall
+CFLAGS += -Wall -fPIC
 #CFLAGS += -Werror
 #CFLAGS += -mfloat-abi=soft
 # keep every function in separate section. This will allow linker to dump unused functions
@@ -135,7 +134,7 @@ release: ASMFLAGS += -DNDEBUG -O3
 release: LDFLAGS += -O3
 release: $(BUILD_DIRECTORIES) $(OBJECTS)
 	@echo [RELEASE]Linking target: $(OUTPUT_FILENAME)
-	$(ECHO)$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -o $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME)
+	$(ECHO)$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -shared -o $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME)
 
 ## Create build directories
 $(BUILD_DIRECTORIES):
@@ -156,7 +155,7 @@ $(OBJECT_DIRECTORY)/%.o: %.c
 # Link
 $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME): $(BUILD_DIRECTORIES) $(OBJECTS)
 	@echo Linking target: $(OUTPUT_FILENAME)
-	$(NO_ECHO)$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -o $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME)
+	$(NO_ECHO)$(CC) $(LDFLAGS) $(OBJECTS) $(LIBS) -shared -o $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME)
 
 clean:
 	$(RM) $(OBJECT_DIRECTORY) $(OUTPUT_BINARY_DIRECTORY)/$(OUTPUT_FILENAME)
